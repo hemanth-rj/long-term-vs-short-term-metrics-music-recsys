@@ -216,49 +216,6 @@ All key parameters are defined at the top of their respective cells and can be m
 | `yambda_sample_listens.parquet` | Filtered listen events with session IDs |
 | `yambda_session_stats.parquet` | Session-level engagement metrics |
 | `yambda_user_stats.parquet` | User-level retention metrics |
-
----
-
-## Reproducing the Results
-
-1. Install dependencies (see above)
-2. Run all cells in order — the notebook is self-contained
-3. The data loading cell streams directly from HuggingFace; no manual download needed
-4. For the main experiment loop, replace Cell 30 with the contents of `fast_experiment_cell.py` to reduce runtime from ~9 hours to ~5 minutes per alpha
-5. Set `BEST_ALPHA = 1.0` before the stress test cell (Cell 38) to ensure alpha=1.0 is used as the primary result regardless of the auto-selection logic
-
-Expected total runtime (with fast experiment cell): approximately 30–45 minutes end-to-end on a standard CPU instance.
-
----
-
-## Limitations
-
-- Predicted engagement is a historical average from the training window, not a live measurement. Actual engagement under Policy B in deployment could differ.
-- The candidate set simulates a two-stage retrieve-then-rank architecture. Platforms using end-to-end neural ranking without a distinct retrieval stage may find the simulation less directly applicable.
-- The 194 users in the 1M sample represent a narrow slice of a real platform's user base. Results should be validated on a more diverse population before drawing platform-wide conclusions.
-
----
-
-## Citation
-
-```
-[Paper citation to be added upon acceptance]
-```
-
----
-
-## References
-
-1. Abdollahpouri, H., Burke, R., and Mobasher, B. (2019). Managing popularity bias in recommender systems with personalized re-ranking. *Proceedings of the 32nd International FLAIRS Conference.*
-
-2. Castells, P., Hurley, N., and Vargas, S. (2022). Novelty and diversity in recommender systems. In Ricci, F. et al. (Eds.), *Recommender Systems Handbook*, 3rd ed. Springer.
-
-3. Jeunen, O. and Goethals, B. (2021). Revisiting offline evaluation for implicit-feedback recommender systems. *Proceedings of the 15th ACM Conference on Recommender Systems (RecSys 2021).*
-
-4. Kumar, A. (2025). Value functions in ranking systems for long-term user engagement. *Journal of Computational Analysis and Applications*, 33(1), 112–128.
-
-5. Mehrotra, R., McInerney, J., Bouchard, H., Lalmas, M., and Diaz, F. (2018). Towards a fair marketplace: Counterfactual evaluation of the trade-off between relevance, fairness and satisfaction in recommendation systems. *Proceedings of the 27th ACM International Conference on Information and Knowledge Management (CIKM 2018).*
-
 6. Steck, H. (2018). Calibrated recommendations. *Proceedings of the 12th ACM Conference on Recommender Systems (RecSys 2018).*
 
 7. Yandex (2024). Yambda: Yet another music benchmark dataset for recommendation. *HuggingFace Datasets.* https://huggingface.co/datasets/yandex/yambda
