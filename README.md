@@ -216,6 +216,4 @@ All key parameters are defined at the top of their respective cells and can be m
 | `yambda_sample_listens.parquet` | Filtered listen events with session IDs |
 | `yambda_session_stats.parquet` | Session-level engagement metrics |
 | `yambda_user_stats.parquet` | User-level retention metrics |
-6. Steck, H. (2018). Calibrated recommendations. *Proceedings of the 12th ACM Conference on Recommender Systems (RecSys 2018).*
 
-7. Yandex (2024). Yambda: Yet another music benchmark dataset for recommendation. *HuggingFace Datasets.* https://huggingface.co/datasets/yandex/yambda
