@@ -1,219 +1,264 @@
-# Long-Term vs Short-Term Metrics for Music Recommendation Systems
+# Offline Ranking Objective Audit for Music Streaming
 
-A simulation-based framework for evaluating how music recommender systems can balance **immediate engagement** (short-term) with **user retention and content diversity** (long-term), built on the [Yandex Music (Yambda)](https://huggingface.co/datasets/yandex/yambda) large-scale listening dataset.
+**UMAP 2026 Industry Track — Companion Code**
 
-> **Venue**: UMAP 2026 — ACM Conference on User Modeling, Adaptation and Personalization
-
----
-
-## Table of Contents
-
-- [Objective](#objective)
-- [Experiment Design](#experiment-design)
-  - [Three-Layer Metric Framework](#three-layer-metric-framework)
-  - [Recommendation Policies](#recommendation-policies)
-  - [Candidate Expansion & Reranking](#candidate-expansion--reranking)
-  - [Stress Testing](#stress-testing)
-- [Dataset](#dataset)
-- [Notebook Walkthrough](#notebook-walkthrough)
-  - [Part 1 — Data Loading & Metric Construction](#part-1--data-loading--metric-construction)
-  - [Part 2 — Analysis, Policies & Evaluation](#part-2--analysis-policies--evaluation)
-- [Key Outputs & Visualizations](#key-outputs--visualizations)
-- [Requirements](#requirements)
-- [Reproducing the Results](#reproducing-the-results)
-- [License](#license)
+A lightweight framework for auditing the engagement-diversity trade-off of alternative ranking objectives in music streaming, using candidate re-ranking on historical listening logs — without any model retraining.
 
 ---
 
-## Objective
+## Overview
 
-Modern music recommender systems are typically optimized for short-term proxy metrics such as click-through rate or skip rate. While these signals are easy to measure, they can lead to **filter bubbles**, **popularity bias**, and **user churn** over time.
+Production recommender systems in music streaming typically optimise for short-term engagement: maximising the fraction of a track a user plays before skipping. This concentrates recommendations on popular content and systematically suppresses the long tail of the catalogue.
 
-This project proposes and evaluates a **multi-layer satisfaction framework** that jointly considers:
+Evaluating a diversity-aware alternative normally requires full model retraining and live A/B experimentation — a process that takes weeks and carries real production risk.
 
-1. **Immediate interaction quality** — did the user enjoy *this* track?
-2. **Session-level engagement** — how rich and diverse was the listening session?
-3. **Long-term retention** — does the user keep coming back?
+This framework answers the question **before** any system change is made:
 
-By simulating two contrasting recommendation policies on real listening data, the framework quantifies the **trade-off between short-term engagement and long-term health** of a music platform.
+> *If we changed our ranking objective to incorporate novelty and retention signals, how much engagement would we give up and how much long-tail exposure would we gain?*
+
+The framework simulates two ranking policies on held-out sessions from historical data, using popularity-calibrated candidate sampling to ensure the baseline reflects realistic production conditions.
 
 ---
 
-## Experiment Design
+## Key Results (Yambda, 1M events, alpha=1.0)
 
-### Three-Layer Metric Framework
+| Metric | Policy A (engagement only) | Policy B (multi-layer) | Delta |
+|---|---|---|---|
+| Predicted engagement | 0.9297 | 0.9154 | **−0.0143** |
+| Long-tail share | 0.2939 | 0.3629 | **+0.0690** |
+| Inv. popularity | 0.6582 | 0.7437 | **+0.0856** |
+| Retention affinity | 0.0975 | 0.0987 | **+0.0012** |
 
-| Layer | Granularity | Metrics | Captures |
-|-------|-------------|---------|----------|
-| **Layer 1** | Per-listen | Skip rate, completion rate, mean played ratio, like rate | Immediate interaction quality |
-| **Layer 2** | Per-session | Session length, unique track ratio, algorithmic mix ratio, in-session skip rate | Within-session engagement & diversity |
-| **Layer 3** | Per-user | Number of sessions, active span (days), mean return gap (hours), retention signal | Long-term retention & loyalty |
+All differences significant at p < 0.001 across 22,970 evaluation sessions.
 
-**Session definition**: A new session begins whenever the gap between consecutive listens by the same user exceeds **30 minutes** (360 × 5-second time bins).
-
-**Threshold calibration**: Skip and completion thresholds are derived empirically from the data distribution — skip is defined as playback below the **25th percentile** of `played_ratio`, and completion as playback above the **90th percentile** (or 0.90 if the empirical quantile saturates at 1.0).
-
-### Recommendation Policies
-
-Two simulated policies are compared via **candidate-set reranking**:
-
-| Policy | Scoring Function | Philosophy |
-|--------|-----------------|------------|
-| **Policy A** *(Short-term)* | `score = played_ratio` | Maximize immediate engagement only |
-| **Policy B** *(Multi-layer)* | `score = w₁·played_ratio + w₂·inv_pop + w₃·retention_signal` | Balance engagement, novelty, and retention |
-
-Where:
-- **`played_ratio`** — item-level mean playback completion (engagement proxy)
-- **`inv_pop`** — `1 / log(1 + popularity)`, an inverse-popularity novelty signal that promotes long-tail content
-- **`retention_signal`** — normalized inverse of mean return gap per user (higher = more loyal user); min-max scaled to [0, 1]
-
-Default weights: `w₁ = 0.4`, `w₂ = 0.3`, `w₃ = 0.3`.
-
-### Candidate Expansion & Reranking
-
-For each session, a candidate set is constructed by combining:
-
-1. **Tracks already in the session** (ground-truth interactions)
-2. **Up to 50 items sampled from the user's history** (personalization)
-3. **Up to 50 items sampled globally** (exploration / cold-start)
-
-Both policies independently rerank the same candidate set and select the **Top-20** items. Session-level summary metrics (predicted engagement, inverse popularity, long-tail share) are then compared across policies.
-
-### Stress Testing
-
-Three weight configurations are evaluated to map the **engagement–exposure trade-off frontier**:
-
-| Configuration | w₁ (engagement) | w₂ (novelty) | w₃ (retention) |
-|---------------|-----------------|---------------|-----------------|
-| `engagement_heavy` | 0.6 | 0.2 | 0.2 |
-| `balanced` | 0.5 | 0.25 | 0.25 |
-| `diversity_heavy` | 0.4 | 0.3 | 0.3 |
+**Stress test (balanced config, alpha=1.0):** +9.5pp long-tail gain at −2.6pp engagement cost. Trade-off is strictly monotonic across all three weight configurations tested.
 
 ---
 
 ## Dataset
 
-**Yandex Music (Yambda)** — a large-scale, publicly available music listening dataset.
+[Yambda](https://huggingface.co/datasets/yandex/yambda) — a large-scale public music streaming dataset by Yandex.
 
-- **Source**: `yandex/yambda` on Hugging Face (`flat-multievent-50m` subset)
-- **Sample used**: 1,000,000 rows (stream-loaded)
-- **Key fields**: `uid`, `item_id`, `timestamp`, `is_organic`, `event_type`, `played_ratio_pct`, `track_length_seconds`
-- **Event types**: `listen`, `like`, and others; the analysis focuses on `listen` events for playback-based metrics
+- **Subset used:** `flat-multievent-50m`
+- **Events sampled:** 1,000,000
+- **Listen events:** 971,902
+- **Unique items (train window):** 93,778
+- **Users:** 194
+- **Evaluation sessions:** 22,970
 
----
-
-## Notebook Walkthrough
-
-The notebook `UMAP_Yambda_Satisfaction_Framework.ipynb` is organized into two major parts.
-
-### Part 1 — Data Loading & Metric Construction
-
-| Cell(s) | Description |
-|---------|-------------|
-| 1 | Dependency installation (commented out) |
-| 2 | Import libraries and define constants (`MAX_ROWS=1M`, `SEED=42`) |
-| 3 | Stream-load the Yambda dataset from Hugging Face |
-| 4 | Pull 1M rows into a Pandas DataFrame |
-| 5 | Select relevant columns and enforce clean dtypes |
-| 6 | Sanity checks — event type distribution, null rates for `played_ratio_pct` and `track_length_seconds` |
-| 7 | Filter to `listen` events; convert `played_ratio_pct` (1–100) → `played_ratio` (0–1) |
-| 8 | **Session construction** — sort by user+timestamp, compute inter-listen gaps, assign session IDs using a 30-minute gap threshold |
-| 9 | **Layer 1 metrics** — global skip rate, completion rate, mean played ratio |
-| 10 | **Layer 2 metrics** — per-session aggregates: session length, unique track ratio, algorithmic mix, in-session skip rate |
-| 11 | Descriptive statistics for session-level metrics |
-| 12 | **Layer 3 metrics** — per-user aggregates: number of sessions, active span in days, mean return gap in hours |
-| 13 | Export intermediate DataFrames as Parquet files for reproducibility |
-
-### Part 2 — Analysis, Policies & Evaluation
-
-| Cell(s) | Description |
-|---------|-------------|
-| 14 | Markdown header — Part 2 |
-| 15–16 | Data cleaning: drop nulls in `played_ratio`, clip values to [0, 1] |
-| 17 | **Visualization**: histogram of `played_ratio` distribution |
-| 18 | Quantile analysis of played ratio for threshold calibration |
-| 19 | Define calibrated skip and completion thresholds |
-| 20 | Recompute **Layer 1 metrics** with calibrated thresholds; compute like rate |
-| 21 | **Organic vs algorithmic comparison** — skip and completion rates by source |
-| 22 | Rebuild sessions (threshold reminder) |
-| 23 | Session-level descriptive stats |
-| 24 | Re-clean played ratio (clip + drop nulls) |
-| 25–26 | **Quantile-based threshold justification** — derive thresholds from the 25th / 90th percentiles with a methodological sentence for the paper |
-| 27 | Generate a plain-English methods sentence for thresholds |
-| 28 | **Layer 1 summary** (global + organic vs algorithmic breakdown) |
-| 29 | **Layer 2 summary** — session-level descriptive statistics |
-| 30 | **Layer 3 summary** — user-level descriptive statistics |
-| 31 | **Retention signal construction** — inverse of mean return gap, min-max normalized to [0, 1] |
-| 32 | Item popularity computation |
-| 33 | Merge retention signal into listens DataFrame |
-| 34 | Inspect merged columns |
-| 35 | Compute inverse-popularity (`inv_pop`) novelty signal |
-| 36 | **Policy scoring** — compute `score_A` (short-term) and `score_B` (multi-layer) for every listen |
-| 37 | **Candidate expansion reranking** — for each session, build candidate set (session + user history + global), rerank under both policies, extract Top-20 summary metrics |
-| 38 | **Stress testing** — sweep three weight configurations, compute engagement and novelty deltas |
-| 39 | **Visualization**: engagement–exposure trade-off frontier scatter plot |
-| 40 | Policy A vs Policy B — mean Top-k metrics comparison |
-| 41 | Per-session delta analysis (B − A) across Top-k metrics |
-| 42 | **Visualization**: played ratio distribution histogram |
-| 43 | **Visualization**: organic vs algorithmic bar chart (skip rate + completion rate) |
-| 44 | Per-session delta with robust column filtering |
-| 45 | **Visualization**: Policy B − Policy A bar chart for Top-k session metrics |
-| 46 | **Correlation matrix** — played ratio, inverse popularity, retention signal, and composite score B |
+The dataset is loaded via HuggingFace `datasets` in streaming mode. No manual download required.
 
 ---
 
-## Key Outputs & Visualizations
-
-| Output | Description |
-|--------|-------------|
-| `yambda_sample_flat50m.parquet` | Raw 1M-row sample |
-| `yambda_sample_listens.parquet` | Cleaned listen events with sessions |
-| `yambda_session_stats.parquet` | Layer 2 session-level aggregates |
-| `yambda_user_stats.parquet` | Layer 3 user-level aggregates |
-| Played Ratio Histogram | Shows bimodal distribution — many skips (near 0) and many completions (near 1) |
-| Organic vs Algorithmic Bar Chart | Compares skip and completion rates across recommendation sources |
-| Engagement–Exposure Trade-off Frontier | Scatter plot showing how different weight configs shift the novelty-engagement balance |
-| Policy B − A Delta Bar Chart | Quantifies per-metric lift of the multi-layer policy over the engagement-only baseline |
-| Correlation Matrix | Reveals relationships between engagement, novelty, retention, and the composite score |
-
----
-
-## Requirements
-
-- Python ≥ 3.9
-- `pandas`
-- `numpy`
-- `matplotlib`
-- `datasets` (Hugging Face)
-- `tqdm`
-- `pyarrow`
-
-Install all dependencies:
+## Installation
 
 ```bash
-pip install pandas numpy matplotlib datasets tqdm pyarrow
+pip install datasets pyarrow pandas numpy tqdm scipy matplotlib
 ```
+
+Or using the notebook's commented install cell:
+
+```bash
+# !pip -q install datasets pyarrow pandas numpy tqdm scipy
+```
+
+**Python version:** 3.12 (tested). Should work on 3.9+.
+
+---
+
+## Notebook Structure
+
+The notebook is organised into five parts. Run cells sequentially from top to bottom.
+
+### Part 1 — Data Loading & Characterisation (Cells 1–16)
+
+Loads 1M events from Yambda, filters to listen events, cleans the played ratio, builds sessions using a 30-minute inactivity threshold, and computes three layers of engagement metrics:
+
+- **Layer 1:** Individual listen metrics — skip rate, completion rate, mean played ratio
+- **Layer 2:** Session-level metrics — session length, unique track ratio, algorithmic vs organic ratio
+- **Layer 3:** User-level metrics — number of sessions, active span, mean return gap between sessions
+
+Saves four intermediate parquet files:
+
+```
+yambda_sample_flat50m.parquet
+yambda_sample_listens.parquet
+yambda_session_stats.parquet
+yambda_user_stats.parquet
+```
+
+### Part 2 — Temporal Split & Signal Construction (Cells 17–23)
+
+**Temporal split (80/20):** Item statistics are computed from the first 80% of the timeline only. Evaluation happens on sessions in the remaining 20%. This prevents the circular evaluation problem where Policy A ranks by the exact statistic being measured.
+
+Three item-level scoring signals are computed from the training window:
+
+| Signal | Formula | What it measures |
+|---|---|---|
+| `item_mean_played_ratio` | Mean played ratio per item (train) | Predicted engagement |
+| `inv_pop` | `1 / log(1 + popularity)` | Novelty — rare items score high |
+| `item_retention_affinity` | Mean user retention signal per item | Items liked by loyal users score high |
+
+Inter-signal correlations are all below 0.16, confirming each signal captures independent information.
+
+### Part 3 — Popularity-Biased Candidate Sampling (Cells 24–28)
+
+**The core methodological contribution.**
+
+Global candidates are sampled proportional to `pop^alpha` rather than uniformly:
+
+```
+P(select item i) = pop_i^alpha / sum_j(pop_j^alpha)
+```
+
+| Alpha | Regime | Policy A long-tail baseline |
+|---|---|---|
+| 0.0 | Uniform (broken — artificially inflates baseline to 68%) | 68.3% |
+| 0.5 | Mild popularity bias | 47.2% |
+| **1.0** | **Linear popularity weighting (recommended)** | **29.4%** |
+| 2.0 | Quadratic concentration | 22.1% |
+
+**Why this matters:** Uniform sampling floods every candidate set with long-tail items by default (median item popularity = 2 listens). This makes Policy A look artificially diverse before any diversity objective is applied, making the problem invisible in the data. Popularity-biased sampling creates a realistic baseline where the engagement-only policy concentrates on popular content — which is what a real production system does.
+
+**Why alpha=1.0:** Linear popularity weighting has a natural interpretation (items sampled at the rate they appear in the listening distribution), requires no exponent justification, and produces a Policy A baseline consistent with prior observations that engagement-optimised systems concentrate exposure on popular content [Abdollahpouri et al., 2019; Steck, 2018].
+
+### Part 4 — Main Experiment: All Alpha Values (Cells 29–30)
+
+Runs the full Policy A vs Policy B comparison for all four alpha values. For each evaluation session:
+
+1. Candidate set is constructed: session items + up to 50 prior user history items (train window only, strictly before session start) + 50 popularity-biased global items
+2. Both policies score all candidates
+3. Top-20 items are selected under each policy
+4. Session-level metrics are recorded
+
+**Policy A** scores by `item_mean_played_ratio` only.
+
+**Policy B** uses adaptive weights:
+
+```
+score_B(i, u) = w1(u) * engagement + w2(u) * inv_pop + w3 * retention_affinity
+
+w1(u) = 0.6 - 0.2 * rho_u    (0.6 for low-retention users, 0.4 for high-retention)
+w2(u) = 0.2 + 0.2 * rho_u    (0.2 for low-retention users, 0.4 for high-retention)
+w3    = 0.2                    (fixed)
+```
+
+High-retention users receive more novelty weight; low-retention users remain engagement-heavy.
+
+> **Performance note:** The original implementation using `item_stats[item_stats["item_id"].isin(all_cands)]` inside the session loop took ~9.5 hours per alpha. The fast version in `fast_experiment_cell.py` pre-indexes item stats as numpy arrays and reduces this to ~2–5 minutes per alpha. Use the fast version.
+
+### Part 5 — Results Analysis (Cells 31–41)
+
+Produces the full results suite:
+
+- **Summary table:** Mean metrics per policy, per alpha
+- **Delta table:** Policy B minus Policy A, per alpha
+- **Paired t-tests:** Statistical significance for all key metrics at all alpha values
+- **Figure 1:** Policy A and B long-tail share by alpha (baseline calibration plot)
+- **Figure 2:** Absolute engagement by alpha and engagement cost (B−A)
+- **Stress test:** Three weight configurations (engagement-heavy / balanced / diversity-heavy) at the best alpha
+- **Figure 3:** Trade-off frontier — each weight config as a point in (Δ long-tail, Δ engagement) space
+- **Figure 4:** Policy B−A bar chart for the best alpha
+- **Final summary:** Paper-ready numbers printout
+
+---
+
+## Key Design Decisions
+
+### Session Construction
+
+Sessions are defined by a 30-minute inactivity gap (360 × 5-second timestamp bins). A new session starts when the gap between consecutive events for a user exceeds this threshold. This is consistent with standard practice in session-based recommendation research.
+
+### Leakage Prevention
+
+User history for candidate generation is restricted to training window events that occurred strictly before the session start timestamp:
+
+```python
+prior = [item_id for ts, item_id in history if ts < before_ts]
+```
+
+This prevents future information from leaking into the candidate pool — simulating what would actually be available to a production system at ranking time.
+
+### Evaluation Protocol
+
+The evaluation is **paired**: for each session, metrics are computed under both Policy A and Policy B over the same candidate set. Paired t-tests compare per-session deltas to zero, controlling for variation in session composition.
+
+### Long-Tail Definition
+
+Items are defined as long-tail if their training window popularity is at or below the median popularity across all items. With median popularity = 2 listens across 93,778 items, this is a conservative definition that captures the vast majority of the catalogue.
+
+---
+
+## Configurable Parameters
+
+All key parameters are defined at the top of their respective cells and can be modified:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `MAX_ROWS` | 1,000,000 | Events to load from Yambda |
+| `SESSION_GAP_BINS` | 360 | Inactivity threshold for session split (× 5s bins) |
+| `SKIP_THRESH` | Q0.25 of played_ratio | Skip definition threshold |
+| `COMP_THRESH` | 0.90 | Completion definition threshold |
+| `ALPHA_VALUES` | [0.0, 0.5, 1.0, 2.0] | Candidate sampling bias values to test |
+| `BEST_ALPHA` | 1.0 | Alpha used for stress test and primary results |
+| `TOPK` | 20 | Number of items in top-k recommendation list |
+| `N_USER_CANDS` | 50 | User history candidates per session |
+| `N_GLOBAL_CANDS` | 50 | Global popularity-biased candidates per session |
+| `SEED` | 42 | Random seed for reproducibility |
+
+---
+
+## Output Files
+
+| File | Description |
+|---|---|
+| `yambda_sample_flat50m.parquet` | Full 1M event sample |
+| `yambda_sample_listens.parquet` | Filtered listen events with session IDs |
+| `yambda_session_stats.parquet` | Session-level engagement metrics |
+| `yambda_user_stats.parquet` | User-level retention metrics |
 
 ---
 
 ## Reproducing the Results
 
-```bash
-# Clone the repository
-git clone https://github.com/hemanth-rj/long-term-vs-short-term-metrics-music-recsys.git
-cd long-term-vs-short-term-metrics-music-recsys
+1. Install dependencies (see above)
+2. Run all cells in order — the notebook is self-contained
+3. The data loading cell streams directly from HuggingFace; no manual download needed
+4. For the main experiment loop, replace Cell 30 with the contents of `fast_experiment_cell.py` to reduce runtime from ~9 hours to ~5 minutes per alpha
+5. Set `BEST_ALPHA = 1.0` before the stress test cell (Cell 38) to ensure alpha=1.0 is used as the primary result regardless of the auto-selection logic
 
-# Install dependencies
-pip install pandas numpy matplotlib datasets tqdm pyarrow
-
-# Run the notebook
-jupyter notebook UMAP_Yambda_Satisfaction_Framework.ipynb
-```
-
-> **Note**: The first run will stream ~1M rows from the Yambda dataset on Hugging Face, which requires an internet connection. Subsequent runs can load from the saved Parquet files.
+Expected total runtime (with fast experiment cell): approximately 30–45 minutes end-to-end on a standard CPU instance.
 
 ---
 
-## License
+## Limitations
 
-See repository for license details.
+- Predicted engagement is a historical average from the training window, not a live measurement. Actual engagement under Policy B in deployment could differ.
+- The candidate set simulates a two-stage retrieve-then-rank architecture. Platforms using end-to-end neural ranking without a distinct retrieval stage may find the simulation less directly applicable.
+- The 194 users in the 1M sample represent a narrow slice of a real platform's user base. Results should be validated on a more diverse population before drawing platform-wide conclusions.
+
+---
+
+## Citation
+
+```
+[Paper citation to be added upon acceptance]
+```
+
+---
+
+## References
+
+1. Abdollahpouri, H., Burke, R., and Mobasher, B. (2019). Managing popularity bias in recommender systems with personalized re-ranking. *Proceedings of the 32nd International FLAIRS Conference.*
+
+2. Castells, P., Hurley, N., and Vargas, S. (2022). Novelty and diversity in recommender systems. In Ricci, F. et al. (Eds.), *Recommender Systems Handbook*, 3rd ed. Springer.
+
+3. Jeunen, O. and Goethals, B. (2021). Revisiting offline evaluation for implicit-feedback recommender systems. *Proceedings of the 15th ACM Conference on Recommender Systems (RecSys 2021).*
+
+4. Kumar, A. (2025). Value functions in ranking systems for long-term user engagement. *Journal of Computational Analysis and Applications*, 33(1), 112–128.
+
+5. Mehrotra, R., McInerney, J., Bouchard, H., Lalmas, M., and Diaz, F. (2018). Towards a fair marketplace: Counterfactual evaluation of the trade-off between relevance, fairness and satisfaction in recommendation systems. *Proceedings of the 27th ACM International Conference on Information and Knowledge Management (CIKM 2018).*
+
+6. Steck, H. (2018). Calibrated recommendations. *Proceedings of the 12th ACM Conference on Recommender Systems (RecSys 2018).*
+
+7. Yandex (2024). Yambda: Yet another music benchmark dataset for recommendation. *HuggingFace Datasets.* https://huggingface.co/datasets/yandex/yambda
